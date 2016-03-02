@@ -7,9 +7,346 @@
     <script src="https://cdn.mxpnl.com/libs/mixpanel-platform/build/mixpanel-platform.v0.latest.min.js"></script>
   </head>
   <body class="mixpanel-platform-body">
-    <h1>Hello, World!</h1>
+    <style>
+      body {
+        color: rgb(95,105,131);
+      }
+      h1 {
+        font-size: 20px;
+        margin-bottom: 20px;
+      }
+      #dateSelect, #intervalSelect {
+        display: inline-block;
+        vertical-align: middle;
+      }
+      h2 {
+        font-size: 17px;
+        margin-bottom: 20px;
+      }
+      h3 {
+        font-size: 16px;
+        margin-bottom: 10px;
+      }
+      p {
+        font-size: 14px;
+      }
+      p.bold {
+        font-size: 12px;
+        text-align: center;
+        font-weight: bold;
+      }
+      .label {
+        display: inline-block;
+        margin-right: 10px;
+      }
+      .label.right {
+        margin-left: 270px;
+      }
+      #metrics {
+        margin: 15px 0;
+      }
+      .metric {
+        height: 105px;
+        padding: 15px;
+        max-width: 150px;
+        display: inline-block;
+        margin-right: 60px;
+        text-align: center;
+        vertical-align: top;
+      }
+      .metric:nth-child(5) {
+        margin-right: 0;
+      }
+      .metric-title {
+        font-size: 15px;
+        margin-bottom: 5px;
+      }
+      .metric-data {
+        font-size: 18px;
+        font-weight: bold;
+      }
+      .campaign {
+        background: white;
+        padding: 15px;
+        margin: 25px 0;
+      }
+      .campaign-stat {
+        display: inline-block;
+        margin-right: 50px;
+        font-size: 15px;
+      }
+      table {
+        width: 100%;
+        margin: 20px 0;
+      }
+      th, td {
+        padding: 10px;
+        font-size: 13px;
+        text-align: center;
+      }
+      #view {
+        margin: 5px 0 10px;
+        max-width: 85px;
+        padding: 6px 12px;
+        background-color: #61adf0;
+        background-image: -webkit-linear-gradient(#6ab5f2,#53a0ee);
+        background-image: linear-gradient(#6ab5f2,#53a0ee);
+        box-shadow: inset 0 1px 1px #77bdf4,0 2px 2px -1px rgba(0,0,0,0.2);
+        text-transform: uppercase;
+        border: 1px solid #4d93d7;
+        color: #fff;
+        text-shadow: 0 -1px 0 rgba(0,0,0,0.2);
+        border-radius: 3px;
+        cursor: pointer;
+        font-weight: bold;
+      }
+
+    </style>
+    <h1>Notifications Dashboard</h1>
+    <p class="label">Date Range:</p>
+    <div id="dateSelect"></div>
+    <p class="label right">Time to Convert:</p>
+    <div id="intervalSelect"></div>
+    <div class="mixpanel-platform-section" id="metrics">
+      <h2>Notification Overview</h2>
+    </div>
+    <div class="mixpanel-platform-section" id="detail">
+      <h2>Notification Detail</h2>
+      <p class="loading">Loading...</p>
+    </div>
+    
     <script>
-      // Run queries and display results here
-    </script>
+      var sentThreshold = 1000;
+      var intervals = {
+            items: [
+              {label: '1 Day', value: '1'},
+              {label: '1 Week', value: '7'},
+              {label: '2 Weeks', value: '14'},
+              {label: '30 Days', value: '30'},
+              {label: '90 Days', value: '90'}
+              ]
+          };
+
+      var dateSelect = $('#dateSelect').MPDatepicker();
+      var intervalSelect = $('#intervalSelect').MPSelect(intervals);
+      intervalSelect.val('30');
+      var campaignIds, bestCampaign = ['', 0];
+      
+      MP.api.propertyValues('$campaign_delivery', 'campaign_id').done(function(results) {
+        campaignIds = results.values();
+        runQuery();
+      });
+      
+      function isInt(n) {
+        return n % 1 === 0;
+      }
+      
+      function addMetric(title, data, subtitle) {
+        subtitle = subtitle ? subtitle : '';
+        if (isInt(data) === false) {
+          data = (parseFloat(data)).toFixed(2) + '%';
+        }
+        var metric = '<div class="metric"><div class="metric-title">' + title + '</div><p class="bold">' + subtitle + '</p><div class="metric-data">' + data + '</div></div>';
+        $(metric).appendTo('#metrics');
+      }
+      
+      function getTotalCount(event, dates, callback) {
+        MP.api.segment(event, dates).done(function(results) {
+          var values = results.values()[event];
+          var total = 0;
+          for (var i = 0, j = Object.keys(values).length; i < j; i++) {
+            var date = Object.keys(values)[i];
+            var dayTotal = values[date];
+            total += dayTotal;
+          }
+          callback(total);
+        });
+      }
+      
+      function getMetrics(dates) {
+        // get high level stats for Notification Overview section
+        var metricPromises = [];
+        var sentPromise = new Promise(function(resolve, reject) {
+          getTotalCount('$campaign_delivery', dates, function(results) {
+            resolve(results);
+          });
+        });
+        var openPromise = new Promise(function(resolve, reject) {
+          getTotalCount('$campaign_open', dates, function(results) {
+            resolve(results);
+          });
+        });
+        metricPromises.push(sentPromise, openPromise);
+        Promise.all(metricPromises).then(function(data) {
+          addMetric('Total Notifications Sent', data[0]);
+          addMetric('Total Notifications Opened', data[1]);
+          addMetric('Overall Notification Open Rate', data[1]/data[0]*100);
+        });
+      }
+
+      function runQuery() {
+        // remove previous query (if any)
+        $('.metric').remove();
+        $('.campaign').remove();
+        $('#view').remove();
+        $('.loading').show();
+        
+        var dates = dateSelect.val();
+        var interval = intervalSelect.val();
+        
+        getMetrics(dates);
+        
+        var funnelPromises = [];
+        for (var i = 0, j = Object.keys(campaignIds).length; i < j; i++) {
+          var promise = new Promise(function(resolve, reject) {
+            var campaignId = campaignIds[i];
+            var params = {
+                from: dates.from,
+                to: dates.to,
+                length: interval,
+                segment: 'message_id'
+            };
+            MP.api.funnel({event: '$campaign_delivery', selector: '(string(properties["campaign_id"]) == "' + campaignId + '")'}, '$campaign_open', '$custom_event:108869', params).done(function(results) {
+              data = {};
+              data[campaignId] = results;
+              resolve(data);
+            });
+          });
+          funnelPromises.push(promise);
+        }
+        Promise.all(funnelPromises).then(function(data) {
+          $('<div id="view">Hide Graphs</div>').appendTo('#detail');
+          for (var i = 0, j = data.length; i < j; i++) {
+            var campaign = Object.keys(data[i])[0];
+            var campaignResults = data[i][campaign];
+            funnelResults(campaign, campaignResults, dates);
+          }
+          $('.loading').hide();
+          addMetric('Highest Performing Campaign', bestCampaign[1], bestCampaign[0]);
+        });
+      }
+      
+      function funnelResults(campaignId, results, dates) {
+        var totalSent = 0, totalSuccess = 0, sentDate = '';
+        var table = '<table>';
+        table += '<tr><th>Variant</th><th>Sent</th><th>Opened</th><th>Successful Txn</th></tr>'; // header row
+        for (var i = 0, j = Object.keys(results).length; i < j; i++) {
+          var variant = Object.keys(results)[i];
+          var variantResults = results[variant];
+          if (variant != '$overall') {
+            var sent = 0, open = 0, successful = 0, opentime = 0, successtime = 0;
+            for (var k = 0, l = Object.keys(variantResults).length; k < l; k++) {
+              var date = Object.keys(variantResults)[k];
+              sent += variantResults[date][0].count;
+              if (sent > 0 && sentDate === '') {
+                sentDate = date;
+              }
+              open += variantResults[date][1].count;
+              console.log(open);
+              opentime += variantResults[date][1].count * variantResults[date][1].avg_time;
+              successful += variantResults[date][2].count;
+              successtime += variantResults[date][2].count * variantResults[date][2].avg_time;
+            }
+            totalSent += sent;
+            totalSuccess += successful;
+            var openavg = displayTime(opentime, open);
+            var successavg = displayTime(successtime, successful);
+            table += '<tr><td>' + variant + '</td><td>' + sent + '</td><td>' + open + '<br>' + openavg + '<br>' + (open/sent*100).toFixed(2) + '%</td><td>' + successful + '<br>' + successavg + '<br>' + (successful/open*100).toFixed(2) + '%</td></tr>';
+          }
+        }
+        table += '</table>';
+        // if campaign meets criteria, add it to dashboard
+        if (totalSent > sentThreshold) {
+          var campaignName = campaignjson.hasOwnProperty(campaignId) ? campaignjson[campaignId] : campaignjson2.hasOwnProperty(campaignId) ? campaignjson2[campaignId] : campaignId;
+          var campaignDiv = $('<div class="campaign"></div>').appendTo('#detail');
+          $('<h3>' + campaignName + '</h3>').appendTo(campaignDiv);
+          var overall = (totalSuccess/totalSent*100).toFixed(2);
+          if (overall > bestCampaign[1]) {
+            bestCampaign = [campaignName, overall]
+          }
+          var stats = '<div class="campaign-stats"><div class="campaign-stat">Date of First Send: ' + sentDate + '</div><div class="campaign-stat">Day of Week: ' + weekday(sentDate) + '</div><div class="campaign-stat">Overall Conversion Rate: ' + overall + '%</div></div>';
+          $(stats).appendTo(campaignDiv);
+          $(table).appendTo(campaignDiv);
+          // add graph
+          var graph = $('<div class="mpgraph"></div>').appendTo(campaignDiv);
+          graph.MPChart({
+            chartType: 'line',
+            highchartsOptions: {
+              global: {
+                useUTC: false,
+              },
+              xAxis: {
+                type: 'datetime',
+                labels: {
+                  formatter: function() {
+                    return Highcharts.dateFormat('%H:%M', this.value);
+                  }
+                },
+                dateTimeLabelFormats: {
+                  millisecond: '%H:%M',
+                	second: '%H:%M',
+                	minute: '%H:%M',
+                	hour: '%H:%M',
+                	day: '%H:%M',
+                	week: '%H:%M',
+                	month: '%H:%M',
+                	year: '%H:%M'
+                },
+                minTickInterval: 3600000,
+              }
+            }
+          });
+          // add data to graph
+          MP.api.segment('$campaign_open', {where: '(properties["campaign_id"] == "' + campaignId + '")', from_date: sentDate, to_date: sentDate, unit: 'hour'}).done(function(results) {
+            graph.MPChart('setData', results.values());
+          });
+        }
+      }
+      
+      function displayTime(time, total) {
+        var avg, units, display;
+        if (total == 0) {
+          return '--';
+        } else {
+          avg = time/total;
+        }
+        if (avg > 86400) {
+          units = 'd';
+          display = avg/86400;
+        } else if (avg > 3600) {
+          units = 'h';
+          display = avg/3600;
+        } else if (avg > 60) {
+          units = 'm';
+          display = avg/60;
+        } else {
+          units = 's';
+          display = avg;
+        }
+        return (display).toFixed(2) + units;
+      }
+      function weekday(date) {
+        date = new Date(date);
+        var days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+        return days[date.getDay()];
+      }
+      
+      $('#detail').on('click', '#view', function() {
+        $('.mpgraph').toggle();
+        if ($(this).text().toLowerCase() == 'view graphs') {
+          $(this).text('HIDE GRAPHS');
+        } else {
+          $(this).text('VIEW GRAPHS');
+        }
+      });
+      
+      dateSelect.on('change', function() {
+        runQuery();
+      });
+      intervalSelect.on('change', function() {
+        runQuery();
+      });
+      var campaignjson = {"801499": "1(en): Full Scan"}
+      </script>
   </body>
 </html>
